@@ -667,64 +667,113 @@ function renderWireframe() {
 
 function getArtboard() { return currentLayout.nodes[currentLayout.rootNodes[0]]; }
 
+const imageCache = {};
 function drawNode(ctx, node, scale) {
-  const x = node.x * scale, y = node.y * scale;
-  const w = node.width * scale, h = node.height * scale;
-  const name = node.name || '';
-
   ctx.save();
+  
+  try {
+    const x = node.x * scale, y = node.y * scale;
+    const w = node.width * scale, h = node.height * scale;
+    const name = node.name || '';
 
-  if (node.type === 'image') {
-    if (name.toLowerCase().includes('background')) {
-      ctx.fillStyle = '#f1f5f9';
-      ctx.strokeStyle = '#cbd5e1';
-    } else if (name.toLowerCase().includes('product')) {
-      ctx.fillStyle = '#dbeafe';
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 1.5;
-    } else {
-      ctx.fillStyle = '#fef9c3';
-      ctx.strokeStyle = '#ca8a04';
-    }
-    ctx.lineWidth = ctx.lineWidth || 1;
-    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
-    if (w > 30 * scale && h > 16 * scale) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = `${Math.max(9, 10 * scale)}px Inter, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(truncate(name, 18), x + w / 2, y + h / 2 + 4);
-    }
+    if (node.type === 'image') {
+      const url = node.data && node.data.sourceUrl;
+      
+      if (url) {
+        if (imageCache[url] && imageCache[url].complete) {
+          if (imageCache[url].naturalWidth > 0) {
+            ctx.drawImage(imageCache[url], x, y, w, h);
+          } else {
+            drawPlaceholder(ctx, name, x, y, w, h, scale);
+          }
+        } 
+        else if (!imageCache[url]) {
+          const img = new Image();
+          img.crossOrigin = "Anonymous"; 
+          img.onload = () => { renderWireframe(); }; 
+          img.onerror = () => { renderWireframe(); };
+          img.src = url;
+          imageCache[url] = img;
+          drawPlaceholder(ctx, name, x, y, w, h, scale); 
+        } 
+        else {
+          drawPlaceholder(ctx, name, x, y, w, h, scale);
+        }
+      } else {
+        drawPlaceholder(ctx, name, x, y, w, h, scale);
+      }
 
-  } else if (node.type === 'text') {
-    const content = (node.data && node.data.content) || '';
-    const fs = (node.style && node.style.visual && node.style.visual.fontSize || 24) * scale;
-    ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, w, h);
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#1e293b';
-    ctx.font = `${Math.max(8, Math.min(fs, 24))}px Inter, sans-serif`;
-    ctx.textAlign = 'left';
-    content.split('\n').forEach((line, i) => {
-      ctx.fillText(truncate(line.trim(), 30), x + 3, y + 14 + i * Math.max(10, fs * 1.2));
-    });
+    } else if (node.type === 'text') {
+      const content = String((node.data && node.data.content) || '');
+      const visual = (node.style && node.style.visual) || {};
+      
+      let color = visual.color && visual.color.value ? String(visual.color.value) : '#1e293b';
+      if (color.length === 5) color = color + 'FF'; 
+      
+      const fs = (visual.fontSize || 24) * scale;
+      const fw = visual.fontWeight || 'normal';
+      const fontStyle = visual.fontStyle || 'normal';
+      const fontFamily = visual.fontFamily || 'Inter, sans-serif';
 
-  } else if (node.type === 'shape') {
-    const fill = node.style && node.style.visual && node.style.visual.fill;
-    const fillColor = (fill && fill.value) || '#F4CF1B';
-    ctx.fillStyle = fillColor + 'cc';
-    ctx.strokeStyle = fillColor;
-    ctx.lineWidth = 2;
-    if (node.data && node.data.shapeType === 'circle') {
-      ctx.beginPath();
-      ctx.ellipse(x + w/2, y + h/2, w/2, h/2, 0, 0, Math.PI * 2);
-      ctx.fill(); ctx.stroke();
-    } else {
-      ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
+      
+      ctx.fillStyle = color;
+      ctx.font = `${fontStyle} ${fw} ${Math.max(8, fs)}px ${fontFamily}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+
+      content.split('\n').forEach((line, i) => {
+        ctx.fillText(line, x, y + (i * fs * 1.2));
+      });
+
+    } else if (node.type === 'shape') {
+      const fill = node.style && node.style.visual && node.style.visual.fill;
+      const fillColor = (fill && fill.value) ? String(fill.value) : '#F4CF1B';
+      ctx.fillStyle = fillColor + 'cc'; 
+      ctx.strokeStyle = fillColor;
+      ctx.lineWidth = 2;
+      
+      if (node.data && node.data.shapeType === 'circle') {
+        ctx.beginPath();
+        ctx.ellipse(x + w/2, y + h/2, w/2, h/2, 0, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
+      }
     }
+  } catch (err) {
+    console.warn(`Skipped rendering broken node (${node.id}):`, err);
+  } finally {
+    ctx.restore();
   }
+}
 
+function drawPlaceholder(ctx, name, x, y, w, h, scale) {
+  ctx.save();
+  if (name.toLowerCase().includes('background')) {
+    ctx.fillStyle = '#f1f5f9';
+    ctx.strokeStyle = '#cbd5e1';
+  } else if (name.toLowerCase().includes('product')) {
+    ctx.fillStyle = '#dbeafe';
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5;
+  } else {
+    ctx.fillStyle = '#fef9c3';
+    ctx.strokeStyle = '#ca8a04';
+  }
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
+  
+  if (w > 30 * scale && h > 16 * scale) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = `${Math.max(9, 10 * scale)}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(name.length > 18 ? name.slice(0, 18) + '…' : name, x + w / 2, y + h / 2);
+  }
   ctx.restore();
 }
 
